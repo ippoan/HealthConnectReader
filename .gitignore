@@ -1,0 +1,35 @@
+# Gradle
+.gradle/
+build/
+**/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Android
+*.apk
+*.aab
+*.apks
+*.ap_
+*.dex
+*.class
+
+# Keystore (secret 経由で CI でのみ生成する)
+*.keystore
+*.jks
+app/release.keystore
+
+# Captures
+captures/
+
+# Logs
+*.log
+
+# Local env
+.env
+.env.*
+!.env.example
