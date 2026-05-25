@@ -5,21 +5,46 @@ on:
     paths:
       - 'app/**'
       - '.github/workflows/release.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'app/**'
+      - '.github/workflows/release.yml'
 permissions:
   contents: write
+  pull-requests: write
 jobs:
   build:
     runs-on: ubuntu-latest
+    # fork からの PR は keystore secret が無いので APK build/署名は skip。
+    # 同 repo の PR は secret が見えるので dev-release が走る。
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract version
+      - name: Compute version + tag
         id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
+          set -euo pipefail
           VN=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          echo "version=v${VN}+${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = "pull_request" ]; then
+            # PR ごとの dev-release。tag は `dev-pr<N>-<run>` で `-` を含むので
+            # GitHub の releases/latest に出ない (= 安定 consumer 影響無し)。
+            TAG="dev-pr${PR_NUMBER}-${RUN_NUMBER}"
+            PRERELEASE=true
+          else
+            TAG="v${VN}+${RUN_NUMBER}"
+            PRERELEASE=false
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VN}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
@@ -44,7 +69,7 @@ jobs:
         run: |
           APK=app/build/outputs/apk/release/app-release.apk
           cp "$APK" /tmp/u.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
             --v1-signing-enabled true --v2-signing-enabled true \
             --v3-signing-enabled false --v4-signing-enabled false \
             --min-sdk-version 28 \
@@ -62,13 +87,45 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
           files: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/apk/release/app-release.apk.sha256
           generate_release_notes: true
 
+      - name: Comment APK link on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          APK_SHA256: ${{ env.APK_SHA256 }}
+        with:
+          script: |
+            const tag = process.env.TAG;
+            const sha = process.env.APK_SHA256;
+            const repo = `${context.repo.owner}/${context.repo.repo}`;
+            const url = `https://github.com/${repo}/releases/tag/${tag}`;
+            const body = [
+              `### Dev APK ready`,
+              ``,
+              `- Release: [${tag}](${url}) (prerelease)`,
+              `- APK: \`app-release.apk\` (sha256 \`${sha}\`)`,
+              ``,
+              `インストール: Release ページから \`.apk\` を端末にダウンロード →`,
+              `「提供元不明のアプリ」を許可してインストール。`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+
       - name: Deploy to Pages
+        # PR では Pages を更新しない (= ユーザー向けの安定 channel を汚さない)。
+        # main push の時だけ gh-pages の app-release.apk を差し替える。
+        if: github.event_name == 'push'
         run: |
           cp app/build/outputs/apk/release/app-release.apk /tmp/app-release.apk
           git config user.name "github-actions[bot]"
@@ -78,5 +135,5 @@ jobs:
           git checkout gh-pages
           cp /tmp/app-release.apk app-release.apk
           git add app-release.apk
-          git commit -m "Update APK ${{ steps.version.outputs.version }}"
+          git commit -m "Update APK ${{ steps.version.outputs.tag }}"
           git push origin gh-pages

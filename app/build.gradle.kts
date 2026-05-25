@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.ippoan.hcreader"
-    compileSdk = 35
+    compileSdk = 36
 
     signingConfigs {
         create("release") {
@@ -21,7 +21,7 @@ android {
     defaultConfig {
         applicationId = "com.ippoan.hcreader"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
     }

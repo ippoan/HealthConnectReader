@@ -17,6 +17,7 @@ Android アプリ。Health Connect 経由で Life Fitness 等のトレッドミ�
 ## 必要環境
 
 - Android 9 (API 28) 以上
+- `compileSdk` / `targetSdk` は 36 (`connect-client:1.1.0-rc02` が API 36 を要求するため)
 - Health Connect (Android 14+ は OS 同梱、それ以前は Play ストアからインストール)
 - 端末側で Life Fitness アプリと Health Connect の連携が ON
 
@@ -29,8 +30,13 @@ Android アプリ。Health Connect 経由で Life Fitness 等のトレッドミ�
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-リリースビルドは GitHub Actions (`.github/workflows/release.yml`) で行う。
-`main` への push で APK タグリリース + Pages 配信が走る。
+リリースビルドは GitHub Actions (`.github/workflows/release.yml`) で行う:
+
+- **`main` への push**: `v<versionName>+<run>` 正式タグ → GitHub Release + `gh-pages` 配信
+- **PR push**: `dev-pr<N>-<run>` prerelease タグ → GitHub Release のみ (Pages は触らない)
+  - PR ごとに APK を端末で試せるよう、PR コメントに APK link を自動投稿
+  - tag に `-` を含むので `releases/latest` API には出ない (安定 channel と分離)
+  - fork PR は keystore secret が無いので skip (同 repo の PR のみ走る)
 
 ### 必要な GitHub Secrets
 
