@@ -86,6 +86,38 @@ jobs:
             > app/build/outputs/apk/release/app-release.apk.sha256
           echo "APK_SHA256=$(cat app/build/outputs/apk/release/app-release.apk.sha256)" >> "$GITHUB_ENV"
 
+      - name: Generate install QR
+        # release asset の安定 URL を QR 化 → release body と PR コメントから参照する。
+        # 端末で release page を開かなくても QR 撮影だけで .apk を落とせるようにする。
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq qrencode
+          APK_URL="https://github.com/${REPO}/releases/download/${TAG}/app-release.apk"
+          qrencode -o app/build/outputs/apk/release/app-release-qr.png -s 8 -m 2 "$APK_URL"
+          echo "APK_URL=${APK_URL}" >> "$GITHUB_ENV"
+
+      - name: Compose release body
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          QR_URL="https://github.com/${REPO}/releases/download/${TAG}/app-release-qr.png"
+          {
+            echo ""
+            echo "## インストール"
+            echo ""
+            echo "端末カメラで以下の QR を読み込むと \`app-release.apk\` の直 DL リンクが開く。"
+            echo "「提供元不明のアプリ」を許可してインストール。"
+            echo ""
+            echo "<img src=\"${QR_URL}\" alt=\"Install QR\" width=\"260\">"
+            echo ""
+            echo "- APK 直 DL: ${APK_URL}"
+            echo "- sha256: \`${APK_SHA256}\`"
+          } > /tmp/release-body.md
+          cat /tmp/release-body.md
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
@@ -94,7 +126,10 @@ jobs:
           files: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/apk/release/app-release.apk.sha256
+            app/build/outputs/apk/release/app-release-qr.png
           generate_release_notes: true
+          body_path: /tmp/release-body.md
+          append_body: true
 
       - name: Comment APK link on PR
         if: github.event_name == 'pull_request'
@@ -108,14 +143,19 @@ jobs:
             const sha = process.env.APK_SHA256;
             const repo = `${context.repo.owner}/${context.repo.repo}`;
             const url = `https://github.com/${repo}/releases/tag/${tag}`;
+            const apk = `https://github.com/${repo}/releases/download/${tag}/app-release.apk`;
+            const qr = `https://github.com/${repo}/releases/download/${tag}/app-release-qr.png`;
             const body = [
               `### Dev APK ready`,
               ``,
               `- Release: [${tag}](${url}) (prerelease)`,
               `- APK: \`app-release.apk\` (sha256 \`${sha}\`)`,
               ``,
-              `インストール: Release ページから \`.apk\` を端末にダウンロード →`,
-              `「提供元不明のアプリ」を許可してインストール。`,
+              `**端末カメラで QR を読むと APK 直 DL が開く** (「提供元不明のアプリ」を許可してインストール):`,
+              ``,
+              `<img src="${qr}" alt="Install QR" width="260">`,
+              ``,
+              `または直リンク: ${apk}`,
             ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
