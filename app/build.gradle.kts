@@ -6,7 +6,9 @@ plugins {
 }
 
 // `local.properties` (gitignored) または env var から build-time config を読む。
-// CI では env var を `RELEASE_WORKER_URL` / `RELEASE_UPLOAD_TOKEN` で渡す。
+// CI では env var を `HCREADER_RELEASE_WORKER_URL` (org variable) /
+// `HCREADER_RELEASE_UPLOAD_TOKEN` (org secret) で渡す — 他の HCREADER_*
+// secret と命名揃え (Refs #6)。
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
@@ -40,19 +42,22 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // WebView が load する worker URL。custom domain が決まったら override する。
+        // WebView が load する worker URL。custom domain `hcreader.ippoan.org`
+        // を default に。release.yml が org variable HCREADER_RELEASE_WORKER_URL
+        // で上書き可能 (= staging で別 URL を当てたい時用)。
         buildConfigField(
             "String",
             "WORKER_URL",
-            "\"${cfg("RELEASE_WORKER_URL", "https://healthconnectreader-worker.ippoan-cf.workers.dev/")}\"",
+            "\"${cfg("HCREADER_RELEASE_WORKER_URL", "https://hcreader.ippoan.org/")}\"",
         )
         // POST /api/upload Bearer。secrets-inventory MCP が CF Secrets Store と
         // GCP Secret Manager に投入する `hcreader-upload-token` と同じ値を
-        // CI 経由で APK ビルドに埋め込む (現状 MVP: build-in token、Refs #6)。
+        // org secret HCREADER_RELEASE_UPLOAD_TOKEN 経由で APK ビルドに埋め込む
+        // (現状 MVP: build-in token、Refs #6)。
         buildConfigField(
             "String",
             "UPLOAD_TOKEN",
-            "\"${cfg("RELEASE_UPLOAD_TOKEN", "")}\"",
+            "\"${cfg("HCREADER_RELEASE_UPLOAD_TOKEN", "")}\"",
         )
     }
 

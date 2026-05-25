@@ -96,9 +96,14 @@ jobs:
         # PKCS12 keystore は store/key 同パスワードが仕様強制なので
         # `RELEASE_STORE_PASSWORD` 1 個を build.gradle.kts の両プロパティに
         # 流す (= secret は HCREADER_RELEASE_STORE_PASSWORD だけで運用)。
+        # HCREADER_RELEASE_UPLOAD_TOKEN / _WORKER_URL は WebView + WorkManager
+        # の BuildConfig に焼き込む値 (org-level secret + variable から注入、
+        # Refs #6)。
         run: ./gradlew assembleRelease
         env:
           RELEASE_STORE_PASSWORD: ${{ secrets.HCREADER_RELEASE_STORE_PASSWORD }}
+          HCREADER_RELEASE_UPLOAD_TOKEN: ${{ secrets.HCREADER_RELEASE_UPLOAD_TOKEN }}
+          HCREADER_RELEASE_WORKER_URL: ${{ vars.HCREADER_RELEASE_WORKER_URL }}
 
       - name: Re-sign v1+v2
         run: |
