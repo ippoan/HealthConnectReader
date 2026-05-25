@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_SPEED" />
 
+    <!-- WebView + worker への HTTPS POST 用 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Android 13 以下で Health Connect アプリ (com.google.android.apps.healthdata) を
          クエリできるようにする (Android 14+ では Health Connect が OS 同梱なので不要だが
          後方互換のため記載) -->
