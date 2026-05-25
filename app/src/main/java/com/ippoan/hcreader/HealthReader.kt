@@ -129,4 +129,92 @@ class HealthReader(private val client: HealthConnectClient) {
 
         return out.toString()
     }
+
+    /**
+     * 過去 [days] 日分 (= 今日含む) を日単位でまとめて JSON にする。
+     * 出力形式は worker `/api/upload-batch` の入力に直接渡せる:
+     * `{ days: [ { date: "yyyy-MM-dd", payload: { sessions, distances, speeds } } ] }`
+     *
+     * HC への ReadRecordsRequest は 1 回だけ全レコード読み (時間範囲フィルタのみ)、
+     * クライアント側で startTime の local date でバケットに振り分ける。
+     */
+    suspend fun readPastDaysJson(days: Int): String {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val rangeStart = today.minusDays((days - 1).toLong()).atStartOfDay(zone).toInstant()
+        val rangeEnd = Instant.now()
+        val range = TimeRangeFilter.between(rangeStart, rangeEnd)
+
+        // date → JSONArray
+        val sessionsByDay = HashMap<String, JSONArray>()
+        val distancesByDay = HashMap<String, JSONArray>()
+        val speedsByDay = HashMap<String, JSONArray>()
+
+        fun bucket(map: HashMap<String, JSONArray>, date: String): JSONArray =
+            map.getOrPut(date) { JSONArray() }
+
+        fun dateOf(inst: Instant): String =
+            inst.atZone(zone).toLocalDate().toString()
+
+        client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
+            .records
+            .forEach {
+                bucket(sessionsByDay, dateOf(it.startTime)).put(
+                    JSONObject()
+                        .put("startTime", it.startTime.toString())
+                        .put("endTime", it.endTime.toString())
+                        .put("exerciseType", it.exerciseType)
+                        .put("title", it.title ?: JSONObject.NULL)
+                        .put("source", it.metadata.dataOrigin.packageName)
+                )
+            }
+
+        client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
+            .records
+            .forEach {
+                bucket(distancesByDay, dateOf(it.startTime)).put(
+                    JSONObject()
+                        .put("startTime", it.startTime.toString())
+                        .put("endTime", it.endTime.toString())
+                        .put("km", it.distance.inKilometers)
+                        .put("source", it.metadata.dataOrigin.packageName)
+                )
+            }
+
+        client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
+            .records
+            .forEach { rec ->
+                val samples = JSONArray()
+                rec.samples.forEach { s ->
+                    samples.put(
+                        JSONObject()
+                            .put("time", s.time.toString())
+                            .put("kmh", s.speed.inKilometersPerHour)
+                    )
+                }
+                bucket(speedsByDay, dateOf(rec.startTime)).put(
+                    JSONObject()
+                        .put("startTime", rec.startTime.toString())
+                        .put("endTime", rec.endTime.toString())
+                        .put("source", rec.metadata.dataOrigin.packageName)
+                        .put("samples", samples)
+                )
+            }
+
+        // バケット union を date 昇順で並べ、データ無し日も含めて連続的に出力
+        // (= worker 側 R2 で「読み取り 0 件」の証跡を残す)。
+        val daysArr = JSONArray()
+        for (i in 0 until days) {
+            val d = today.minusDays((days - 1 - i).toLong())
+            val key = d.toString()
+            val payload = JSONObject()
+                .put("date", key)
+                .put("collectedAt", Instant.now().toString())
+                .put("sessions", sessionsByDay[key] ?: JSONArray())
+                .put("distances", distancesByDay[key] ?: JSONArray())
+                .put("speeds", speedsByDay[key] ?: JSONArray())
+            daysArr.put(JSONObject().put("date", key).put("payload", payload))
+        }
+        return JSONObject().put("days", daysArr).toString()
+    }
 }
