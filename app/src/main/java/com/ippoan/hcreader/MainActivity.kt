@@ -12,6 +12,8 @@ import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.SpeedRecord
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /**
  * WebView ホスト Activity。worker `BuildConfig.WORKER_URL` を load し、
@@ -63,5 +65,22 @@ class MainActivity : ComponentActivity() {
             loadUrl(BuildConfig.WORKER_URL)
         }
         setContentView(webView)
+
+        // 起動時に 4 種類 (EXERCISE / DISTANCE / SPEED / HISTORY) のうち 1 つでも
+        // 未 grant なら自動で HC permission dialog を出す。uninstall → install
+        // 後は全 permission が reset されるため、user が WebView 上のボタンを押す
+        // 前に prompt を出して操作を 1 ステップ減らす (Refs #6 UX 改善)。
+        ensurePermissionsGranted()
+    }
+
+    private fun ensurePermissionsGranted() {
+        lifecycleScope.launch {
+            val client = HealthConnectClient.getOrCreate(this@MainActivity)
+            val granted = runCatching { client.permissionController.getGrantedPermissions() }
+                .getOrDefault(emptySet())
+            if (!granted.containsAll(permissions)) {
+                requestPerms.launch(permissions)
+            }
+        }
     }
 }
