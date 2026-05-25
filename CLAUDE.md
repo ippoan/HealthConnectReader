@@ -45,13 +45,22 @@ Release ビルドは secret (`RELEASE_KEYSTORE_BASE64` 等) が必要なので C
 
 ### Auto-merge
 
-このリポジトリは **auto-merge を使わない**。理由:
+このリポジトリは **workflow 側で auto-merge を enable する** 設計
+(`release.yml` 内に `ippoan/ci-workflows/.github/workflows/auto-merge.yml@main`
+を呼ぶ `auto-merge` job を持つ)。
 
-- 配布物 (APK) を出す repo なので、merge と同時に release tag が走る挺動を user が
-  目視で確認したい
-- branch protection の required status check も未設定
+- `build` job (APK build + 署名 + Pages deploy) が green になってから
+  `gh pr merge --auto --squash` が queue される
+- branch protection の required status check が無い repo でも、`needs: build`
+  の DAG 制約により build 完走後にしか merge 試行されないので意図しない
+  早期 merge は起こらない
+- TAG_RELEASE_PAT を org-level に設定すれば、PR merge 後の `push: main`
+  event が PAT actor で発火し main の release.yml run (stable APK 更新) が
+  自動で chain する。未設定だと github.token actor になり main run が
+  起動しないので、その場合は手動 workflow_dispatch する
 
-`mcp__github__enable_pr_auto_merge` を Claude が叩くのは **user が明示指示した時のみ**。
+`mcp__github__enable_pr_auto_merge` を Claude が **直接** 叩くのは引き続き
+**user が明示指示した時のみ** (= reflex 違反防止)。通常は workflow 側に任せる。
 
 ### PR description / commit message のキーワード
 
