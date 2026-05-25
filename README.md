@@ -45,18 +45,27 @@ ippoan org-level secrets (全 `HCREADER_` プレフィックス、ippoan/secrets
 
 | secret 名 | 中身 |
 |---|---|
-| `HCREADER_RELEASE_KEYSTORE_BASE64` | 署名鍵 keystore を `base64 -w0` した文字列 |
-| `HCREADER_RELEASE_STORE_PASSWORD` | keystore パスワード |
-| `HCREADER_RELEASE_KEY_PASSWORD` | 鍵パスワード |
+| `HCREADER_RELEASE_KEYSTORE_BASE64` | 署名鍵 keystore (PKCS12) を `base64 -w0` した文字列 |
+| `HCREADER_RELEASE_STORE_PASSWORD` | keystore パスワード (= key パスワードも兼用) |
+
+PKCS12 形式は JDK の仕様で `keypass == storepass` 強制 (= `keytool -keypass` を
+別値で指定しても silently 無視される) のため、secret は 1 個だけ用意し、
+`build.gradle.kts` の `storePassword` / `keyPassword` 両方と `apksigner` の
+`--ks-pass` / `--key-pass` 両方に同じ値を流す。
 
 keystore 生成 (ローカルで 1 回):
 
 ```sh
+PW=$(openssl rand -base64 24)
 keytool -genkeypair -v \
   -keystore release.keystore \
+  -storetype PKCS12 \
   -alias hcreader \
-  -keyalg RSA -keysize 2048 -validity 10000
-base64 -w0 release.keystore   # この出力を RELEASE_KEYSTORE_BASE64 にセット
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass "$PW" -keypass "$PW" \
+  -dname "CN=HealthConnectReader, O=ippoan, C=JP"
+base64 -w0 release.keystore   # この出力を HCREADER_RELEASE_KEYSTORE_BASE64 に
+echo "$PW"                    # この値を HCREADER_RELEASE_STORE_PASSWORD に
 ```
 
 alias は `hcreader` で `app/build.gradle.kts` と `release.yml` の `--ks-key-alias` の

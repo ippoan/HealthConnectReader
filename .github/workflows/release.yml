@@ -60,10 +60,12 @@ jobs:
         run: sed -i "s/versionCode = [0-9]*/versionCode = ${{ github.run_number }}/" app/build.gradle.kts
 
       - name: Build release APK
+        # PKCS12 keystore は store/key 同パスワードが仕様強制なので
+        # `RELEASE_STORE_PASSWORD` 1 個を build.gradle.kts の両プロパティに
+        # 流す (= secret は HCREADER_RELEASE_STORE_PASSWORD だけで運用)。
         run: ./gradlew assembleRelease
         env:
           RELEASE_STORE_PASSWORD: ${{ secrets.HCREADER_RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.HCREADER_RELEASE_KEY_PASSWORD }}
 
       - name: Re-sign v1+v2
         run: |
@@ -75,7 +77,7 @@ jobs:
             --min-sdk-version 28 \
             --ks app/release.keystore --ks-key-alias hcreader \
             --ks-pass "pass:${{ secrets.HCREADER_RELEASE_STORE_PASSWORD }}" \
-            --key-pass "pass:${{ secrets.HCREADER_RELEASE_KEY_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.HCREADER_RELEASE_STORE_PASSWORD }}" \
             --out "$APK" /tmp/u.apk
 
       - name: Checksum
