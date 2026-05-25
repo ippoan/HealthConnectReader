@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_SPEED" />
+    <!-- 過去 30 日 (grant 時から) 以前のデータを読むには history permission が必須
+         (Android 14+ HC 仕様)。issue #6 「過去 30 日 Upload」要件のため追加。 -->
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_HISTORY" />
 
     <!-- WebView + worker への HTTPS POST 用 -->
     <uses-permission android:name="android.permission.INTERNET" />

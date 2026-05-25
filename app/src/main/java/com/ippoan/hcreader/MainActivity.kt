@@ -24,6 +24,9 @@ class MainActivity : ComponentActivity() {
         HealthPermission.getReadPermission(ExerciseSessionRecord::class),
         HealthPermission.getReadPermission(DistanceRecord::class),
         HealthPermission.getReadPermission(SpeedRecord::class),
+        // 過去 30 日 (grant 時から) 以前のデータ取得に必要。Manifest にも対応する
+        // android.permission.health.READ_HEALTH_DATA_HISTORY を宣言済。Refs #6
+        HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY,
     )
 
     private val requestPerms = registerForActivityResult(
