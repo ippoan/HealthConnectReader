@@ -17,6 +17,7 @@ Android アプリ。Health Connect 経由で Life Fitness 等のトレッドミ�
 ## 必要環境
 
 - Android 9 (API 28) 以上
+- `compileSdk` / `targetSdk` は 36 (`connect-client:1.1.0-rc02` が API 36 を要求するため)
 - Health Connect (Android 14+ は OS 同梱、それ以前は Play ストアからインストール)
 - 端末側で Life Fitness アプリと Health Connect の連携が ON
 
@@ -29,25 +30,42 @@ Android アプリ。Health Connect 経由で Life Fitness 等のトレッドミ�
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-リリースビルドは GitHub Actions (`.github/workflows/release.yml`) で行う。
-`main` への push で APK タグリリース + Pages 配信が走る。
+リリースビルドは GitHub Actions (`.github/workflows/release.yml`) で行う:
+
+- **`main` への push**: `v<versionName>+<run>` 正式タグ → GitHub Release + `gh-pages` 配信
+- **PR push**: `dev-pr<N>-<run>` prerelease タグ → GitHub Release のみ (Pages は触らない)
+  - PR ごとに APK を端末で試せるよう、PR コメントに APK link を自動投稿
+  - tag に `-` を含むので `releases/latest` API には出ない (安定 channel と分離)
+  - fork PR は keystore secret が無いので skip (同 repo の PR のみ走る)
 
 ### 必要な GitHub Secrets
 
+ippoan org-level secrets (全 `HCREADER_` プレフィックス、ippoan/secrets-inventory
+の `PUT /mcp/secret-upload/:name` 経由で投入):
+
 | secret 名 | 中身 |
 |---|---|
-| `RELEASE_KEYSTORE_BASE64` | 署名鍵 keystore を `base64 -w0` した文字列 |
-| `RELEASE_STORE_PASSWORD` | keystore パスワード |
-| `RELEASE_KEY_PASSWORD` | 鍵パスワード |
+| `HCREADER_RELEASE_KEYSTORE_BASE64` | 署名鍵 keystore (PKCS12) を `base64 -w0` した文字列 |
+| `HCREADER_RELEASE_STORE_PASSWORD` | keystore パスワード (= key パスワードも兼用) |
+
+PKCS12 形式は JDK の仕様で `keypass == storepass` 強制 (= `keytool -keypass` を
+別値で指定しても silently 無視される) のため、secret は 1 個だけ用意し、
+`build.gradle.kts` の `storePassword` / `keyPassword` 両方と `apksigner` の
+`--ks-pass` / `--key-pass` 両方に同じ値を流す。
 
 keystore 生成 (ローカルで 1 回):
 
 ```sh
+PW=$(openssl rand -base64 24)
 keytool -genkeypair -v \
   -keystore release.keystore \
+  -storetype PKCS12 \
   -alias hcreader \
-  -keyalg RSA -keysize 2048 -validity 10000
-base64 -w0 release.keystore   # この出力を RELEASE_KEYSTORE_BASE64 にセット
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass "$PW" -keypass "$PW" \
+  -dname "CN=HealthConnectReader, O=ippoan, C=JP"
+base64 -w0 release.keystore   # この出力を HCREADER_RELEASE_KEYSTORE_BASE64 に
+echo "$PW"                    # この値を HCREADER_RELEASE_STORE_PASSWORD に
 ```
 
 alias は `hcreader` で `app/build.gradle.kts` と `release.yml` の `--ks-key-alias` の

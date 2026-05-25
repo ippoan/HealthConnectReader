@@ -5,14 +5,18 @@ plugins {
 
 android {
     namespace = "com.ippoan.hcreader"
-    compileSdk = 35
+    compileSdk = 36
 
     signingConfigs {
         create("release") {
             storeFile = file("release.keystore")
+            // PKCS12 (JDK 標準) は仕様上 keyPassword == storePassword 強制。
+            // -keypass を別値で指定しても keytool が silently 無視するため、
+            // ここで明示的に同じ env var (`RELEASE_STORE_PASSWORD`) を両方に
+            // 割り当てる (= secret は 1 個で運用)。
             storePassword = System.getenv("RELEASE_STORE_PASSWORD")
             keyAlias = "hcreader"
-            keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            keyPassword = System.getenv("RELEASE_STORE_PASSWORD")
             enableV1Signing = true
             enableV2Signing = true
         }
@@ -21,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "com.ippoan.hcreader"
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
     }
