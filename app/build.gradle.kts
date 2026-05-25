@@ -18,8 +18,15 @@ val localProps = Properties().apply {
 // が "unclosed string literal" で fail する (実害: run 26386473244)。
 // secret 投入側は yhonda-ohishi/claude-skills の secret-rotate-pipe v2 で
 // `tr -d '\n'` 強制になっているが、人手で投入された旧値や手動操作を防ぐ。
-fun cfg(key: String, default: String): String =
-    (localProps.getProperty(key) ?: System.getenv(key) ?: default).trim()
+//
+// **blank fall-through も必要**: GitHub Actions の `${{ vars.X }}` は X が
+// 未設定の時 `""` を返すため、`?:` だけだと空文字が truthy 扱いされて
+// default が拾えず BuildConfig に "" が焼かれる (実害: WORKER_URL が空で
+// WebView が真っ白、run 26387511512)。null 化してから ?: に流す。
+fun cfg(key: String, default: String): String {
+    val raw = (localProps.getProperty(key) ?: System.getenv(key))?.trim()
+    return if (raw.isNullOrEmpty()) default else raw
+}
 
 android {
     namespace = "com.ippoan.hcreader"
