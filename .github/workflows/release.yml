@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+concurrency:
+  # gh-pages push race を防ぐ。main は main 自身、PR は PR 番号ごとに直列化。
+  group: release-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -45,6 +49,35 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
           echo "version_name=${VN}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute Pages distribution URLs
+        id: dist
+        # alc-app 準拠で Pages を一次配信チャネルにする。QR target は
+        # 安定 URL の github.io 側を指す (release asset の Azure 署名 URL は
+        # mobile browser で詰まる事例があるため二次的なアーカイブ扱い)。
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          PAGES_ROOT="https://${OWNER}.github.io/${REPO_NAME}"
+          if [ "$EVENT" = "pull_request" ]; then
+            REL_DIR="dev/pr${PR_NUMBER}"
+          else
+            REL_DIR=""
+          fi
+          if [ -n "$REL_DIR" ]; then
+            APK_URL="${PAGES_ROOT}/${REL_DIR}/app-release.apk"
+            QR_URL="${PAGES_ROOT}/${REL_DIR}/app-release-qr.png"
+          else
+            APK_URL="${PAGES_ROOT}/app-release.apk"
+            QR_URL="${PAGES_ROOT}/app-release-qr.png"
+          fi
+          echo "rel_dir=${REL_DIR}" >> "$GITHUB_OUTPUT"
+          echo "apk_url=${APK_URL}" >> "$GITHUB_OUTPUT"
+          echo "qr_url=${QR_URL}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
@@ -87,23 +120,17 @@ jobs:
           echo "APK_SHA256=$(cat app/build/outputs/apk/release/app-release.apk.sha256)" >> "$GITHUB_ENV"
 
       - name: Generate install QR
-        # release asset の安定 URL を QR 化 → release body と PR コメントから参照する。
-        # 端末で release page を開かなくても QR 撮影だけで .apk を落とせるようにする。
         env:
-          REPO: ${{ github.repository }}
-          TAG: ${{ steps.version.outputs.tag }}
+          QR_TARGET: ${{ steps.dist.outputs.apk_url }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq qrencode
-          APK_URL="https://github.com/${REPO}/releases/download/${TAG}/app-release.apk"
-          qrencode -o app/build/outputs/apk/release/app-release-qr.png -s 8 -m 2 "$APK_URL"
-          echo "APK_URL=${APK_URL}" >> "$GITHUB_ENV"
+          qrencode -o app/build/outputs/apk/release/app-release-qr.png -s 8 -m 2 "$QR_TARGET"
 
       - name: Compose release body
         env:
-          REPO: ${{ github.repository }}
-          TAG: ${{ steps.version.outputs.tag }}
+          APK_URL: ${{ steps.dist.outputs.apk_url }}
+          QR_URL: ${{ steps.dist.outputs.qr_url }}
         run: |
-          QR_URL="https://github.com/${REPO}/releases/download/${TAG}/app-release-qr.png"
           {
             echo ""
             echo "## インストール"
@@ -115,6 +142,8 @@ jobs:
             echo ""
             echo "- APK 直 DL: ${APK_URL}"
             echo "- sha256: \`${APK_SHA256}\`"
+            echo ""
+            echo "(配信は GitHub Pages: ${APK_URL%/app-release.apk}/ 経由)"
           } > /tmp/release-body.md
           cat /tmp/release-body.md
 
@@ -137,25 +166,27 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           APK_SHA256: ${{ env.APK_SHA256 }}
+          APK_URL: ${{ steps.dist.outputs.apk_url }}
+          QR_URL: ${{ steps.dist.outputs.qr_url }}
         with:
           script: |
             const tag = process.env.TAG;
             const sha = process.env.APK_SHA256;
-            const repo = `${context.repo.owner}/${context.repo.repo}`;
-            const url = `https://github.com/${repo}/releases/tag/${tag}`;
-            const apk = `https://github.com/${repo}/releases/download/${tag}/app-release.apk`;
-            const qr = `https://github.com/${repo}/releases/download/${tag}/app-release-qr.png`;
+            const apk = process.env.APK_URL;
+            const qr  = process.env.QR_URL;
             const body = [
               `### Dev APK ready`,
               ``,
-              `- Release: [${tag}](${url}) (prerelease)`,
+              `- Tag: \`${tag}\` (prerelease)`,
               `- APK: \`app-release.apk\` (sha256 \`${sha}\`)`,
               ``,
-              `**端末カメラで QR を読むと APK 直 DL が開く** (「提供元不明のアプリ」を許可してインストール):`,
+              `**端末カメラで QR を読むと APK 直 DL が始まる** (「提供元不明のアプリ」を許可してインストール):`,
               ``,
               `<img src="${qr}" alt="Install QR" width="260">`,
               ``,
               `または直リンク: ${apk}`,
+              ``,
+              `> 配信は GitHub Pages 経由 (\`${apk.replace(/\/app-release\.apk$/, '/')}\`)。Settings → Pages の source が \`gh-pages\` branch に enable されている前提。`,
             ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -165,17 +196,77 @@ jobs:
             });
 
       - name: Deploy to Pages
-        # PR では Pages を更新しない (= ユーザー向けの安定 channel を汚さない)。
-        # main push の時だけ gh-pages の app-release.apk を差し替える。
-        if: github.event_name == 'push'
+        # alc-app 準拠の一次配信。main push は root に、PR は dev/pr<N>/ 下に置く。
+        # gh-pages branch が無ければ orphan init する (= repo 立ち上げ初回の自動化)。
+        # Pages 自体の有効化 (Settings → Pages → source: gh-pages branch / 「/」) は
+        # 初回 1 回だけ user が手動で行う必要がある。
+        env:
+          REL_DIR: ${{ steps.dist.outputs.rel_dir }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          cp app/build/outputs/apk/release/app-release.apk /tmp/app-release.apk
-          git config user.name "github-actions[bot]"
+          set -euo pipefail
+          # build artifact を一旦避難
+          mkdir -p /tmp/dist
+          cp app/build/outputs/apk/release/app-release.apk        /tmp/dist/
+          cp app/build/outputs/apk/release/app-release.apk.sha256 /tmp/dist/
+          cp app/build/outputs/apk/release/app-release-qr.png     /tmp/dist/
+
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git stash --include-untracked || true
-          git fetch origin gh-pages
-          git checkout gh-pages
-          cp /tmp/app-release.apk app-release.apk
-          git add app-release.apk
-          git commit -m "Update APK ${{ steps.version.outputs.tag }}"
-          git push origin gh-pages
+
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages
+            git checkout gh-pages
+            git pull --ff-only origin gh-pages
+          else
+            echo "gh-pages not found, initializing as orphan"
+            git checkout --orphan gh-pages
+            git rm -rf . >/dev/null 2>&1 || true
+            git clean -fdx
+            cat > README.md <<'EOF'
+          # HealthConnectReader APK distribution
+
+          - Stable: `app-release.apk` (main の最新)
+          - Dev PR builds: `dev/pr<N>/app-release.apk`
+
+          QR PNG は同 dir に `app-release-qr.png` として配置。
+          EOF
+            git add README.md
+            git commit -m "Init gh-pages"
+          fi
+
+          TARGET_DIR="${REL_DIR:-.}"
+          mkdir -p "${TARGET_DIR}"
+          cp /tmp/dist/app-release.apk        "${TARGET_DIR}/app-release.apk"
+          cp /tmp/dist/app-release.apk.sha256 "${TARGET_DIR}/app-release.apk.sha256"
+          cp /tmp/dist/app-release-qr.png     "${TARGET_DIR}/app-release-qr.png"
+          git add "${TARGET_DIR}"
+          git commit -m "Update APK ${TAG} (${TARGET_DIR})"
+
+          # concurrent push race の軽い retry
+          for attempt in 1 2 3; do
+            if git push origin gh-pages; then
+              exit 0
+            fi
+            echo "push failed, attempt ${attempt} — rebasing"
+            git pull --rebase origin gh-pages || true
+            sleep 2
+          done
+          echo "::error::Failed to push gh-pages after 3 attempts"
+          exit 1
+
+  auto-merge:
+    # build (+ Pages deploy) が green になってから PR を auto-merge queue に
+    # 入れる。ippoan/ci-workflows の reusable workflow を呼ぶ。
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    uses: ippoan/ci-workflows/.github/workflows/auto-merge.yml@main
+    secrets:
+      # TAG_RELEASE_PAT が無ければ github.token に fallback (auto-merge.yml の
+      # 内部仕様)。fallback だと PR merge 後の `push: main` event が
+      # github-actions[bot] 起因になり release.yml の main run が発火しない
+      # 仕様 (downstream workflows are not triggered by GITHUB_TOKEN events)。
+      # main 側の app-release.apk を確実に更新したい場合は org-level に
+      # TAG_RELEASE_PAT を設定するか、merge 後に手動 workflow_dispatch する。
+      TAG_RELEASE_PAT: ${{ secrets.TAG_RELEASE_PAT }}
