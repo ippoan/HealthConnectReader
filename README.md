@@ -40,11 +40,14 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ### 必要な GitHub Secrets
 
+ippoan org-level secrets (全 `HCREADER_` プレフィックス、ippoan/secrets-inventory
+の `PUT /mcp/secret-upload/:name` 経由で投入):
+
 | secret 名 | 中身 |
 |---|---|
-| `RELEASE_KEYSTORE_BASE64` | 署名鍵 keystore を `base64 -w0` した文字列 |
-| `RELEASE_STORE_PASSWORD` | keystore パスワード |
-| `RELEASE_KEY_PASSWORD` | 鍵パスワード |
+| `HCREADER_RELEASE_KEYSTORE_BASE64` | 署名鍵 keystore を `base64 -w0` した文字列 |
+| `HCREADER_RELEASE_STORE_PASSWORD` | keystore パスワード |
+| `HCREADER_RELEASE_KEY_PASSWORD` | 鍵パスワード |
 
 keystore 生成 (ローカルで 1 回):
 
