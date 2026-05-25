@@ -35,6 +35,26 @@ class HCBridge(
         }
     }
 
+    /**
+     * 過去 [days] 日分 (= 今日含む) をまとめて読み worker `/api/upload-batch` の
+     * 入力形式 `{ days: [{date, payload}, ...] }` を返す。Refs #6
+     */
+    @JavascriptInterface
+    fun readPastDays(days: Int): String {
+        if (days < 1 || days > 366) {
+            return errJson("invalid_days", "days must be 1..366, got $days")
+        }
+        val status = HealthConnectClient.getSdkStatus(appContext)
+        if (status != HealthConnectClient.SDK_AVAILABLE) {
+            return errJson("hc_unavailable", "Health Connect status=$status")
+        }
+        val client = HealthConnectClient.getOrCreate(appContext)
+        return runBlocking {
+            runCatching { HealthReader(client).readPastDaysJson(days) }
+                .getOrElse { errJson("read_failed", "${it.javaClass.simpleName}: ${it.message}") }
+        }
+    }
+
     @JavascriptInterface
     fun getUploadToken(): String = BuildConfig.UPLOAD_TOKEN
 
