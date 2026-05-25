@@ -11,6 +11,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
@@ -91,11 +93,15 @@ class UploadWorker(
         }
 
         fun isScheduled(ctx: Context): Boolean {
+            // ListenableFuture#get は Guava 依存になるため使わず、work-runtime-ktx の
+            // Flow 版から `runBlocking { .first() }` で同期取得する。
             return try {
-                val infos = WorkManager.getInstance(ctx)
-                    .getWorkInfosForUniqueWork(WORK_NAME)
-                    .get()
-                infos.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+                runBlocking {
+                    WorkManager.getInstance(ctx)
+                        .getWorkInfosForUniqueWorkFlow(WORK_NAME)
+                        .first()
+                        .any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+                }
             } catch (_: Exception) {
                 false
             }
