@@ -13,8 +13,13 @@ val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+// trim() で末尾改行を防ぐ。Cloudflare Secrets Store / GitHub org secret に
+// 改行が混入していると BuildConfig.java の string literal が改行されて javac
+// が "unclosed string literal" で fail する (実害: run 26386473244)。
+// secret 投入側は yhonda-ohishi/claude-skills の secret-rotate-pipe v2 で
+// `tr -d '\n'` 強制になっているが、人手で投入された旧値や手動操作を防ぐ。
 fun cfg(key: String, default: String): String =
-    localProps.getProperty(key) ?: System.getenv(key) ?: default
+    (localProps.getProperty(key) ?: System.getenv(key) ?: default).trim()
 
 android {
     namespace = "com.ippoan.hcreader"
