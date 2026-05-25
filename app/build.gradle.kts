@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// `local.properties` (gitignored) または env var から build-time config を読む。
+// CI では env var を `RELEASE_WORKER_URL` / `RELEASE_UPLOAD_TOKEN` で渡す。
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun cfg(key: String, default: String): String =
+    localProps.getProperty(key) ?: System.getenv(key) ?: default
 
 android {
     namespace = "com.ippoan.hcreader"
@@ -28,6 +39,21 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        // WebView が load する worker URL。custom domain が決まったら override する。
+        buildConfigField(
+            "String",
+            "WORKER_URL",
+            "\"${cfg("RELEASE_WORKER_URL", "https://healthconnectreader-worker.ippoan-cf.workers.dev/")}\"",
+        )
+        // POST /api/upload Bearer。secrets-inventory MCP が CF Secrets Store と
+        // GCP Secret Manager に投入する `hcreader-upload-token` と同じ値を
+        // CI 経由で APK ビルドに埋め込む (現状 MVP: build-in token、Refs #6)。
+        buildConfigField(
+            "String",
+            "UPLOAD_TOKEN",
+            "\"${cfg("RELEASE_UPLOAD_TOKEN", "")}\"",
+        )
     }
 
     buildTypes {
@@ -52,6 +78,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
@@ -61,4 +88,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.health.connect:connect-client:1.1.0-rc02")
+    implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }
