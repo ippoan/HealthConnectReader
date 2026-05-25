@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Health Connect 読取権限 (本アプリで使う 3 種) -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_SPEED" />
+
+    <!-- Android 13 以下で Health Connect アプリ (com.google.android.apps.healthdata) を
+         クエリできるようにする (Android 14+ では Health Connect が OS 同梱なので不要だが
+         後方互換のため記載) -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+        <intent>
+            <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:label="HealthConnectReader"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.DayNight">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Health Connect が「権限がなぜ必要か」説明画面を呼び出すための
+                 rationale intent。要件なので必ず宣言する。 -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
