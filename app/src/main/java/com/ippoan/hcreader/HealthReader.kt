@@ -70,63 +70,84 @@ class HealthReader(private val client: HealthConnectClient) {
 
     // Worker `/api/upload` に送る JSON 表現。診断モード (filter なし) のまま、
     // 端末ローカル時間ではなく ISO-8601 文字列で出す。
+    //
+    // 各 readRecords は **per-type try-catch** で囲み partial 読取を許容する。
+    // Android 16 + HC SDK 1.1.0 で、診断モード (= dataOriginFilter なし) かつ
+    // `READ_HEALTH_DATA_HISTORY` 付きの time-range query が他データ型
+    // (例: SKIN_TEMPERATURE = record type 37) の権限を要求する事象を回避するため。
+    // 落ちた section は top-level `readErrors` に格納し、worker は `days` だけ
+    // 見るので無害 (unknown field は ignore)。Refs #16
     suspend fun readTodayJson(): String {
         val range = todayRange()
         val out = JSONObject()
         out.put("date", LocalDate.now(ZoneId.systemDefault()).toString())
         out.put("collectedAt", Instant.now().toString())
+        val readErrors = JSONObject()
 
         val sessionsArr = JSONArray()
-        client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
-            .records
-            .forEach {
-                sessionsArr.put(
-                    JSONObject()
-                        .put("startTime", it.startTime.toString())
-                        .put("endTime", it.endTime.toString())
-                        .put("exerciseType", it.exerciseType)
-                        .put("title", it.title ?: JSONObject.NULL)
-                        .put("source", it.metadata.dataOrigin.packageName)
-                )
-            }
+        try {
+            client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
+                .records
+                .forEach {
+                    sessionsArr.put(
+                        JSONObject()
+                            .put("startTime", it.startTime.toString())
+                            .put("endTime", it.endTime.toString())
+                            .put("exerciseType", it.exerciseType)
+                            .put("title", it.title ?: JSONObject.NULL)
+                            .put("source", it.metadata.dataOrigin.packageName)
+                    )
+                }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "sessions", e)
+        }
         out.put("sessions", sessionsArr)
 
         val distArr = JSONArray()
-        client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
-            .records
-            .forEach {
-                distArr.put(
-                    JSONObject()
-                        .put("startTime", it.startTime.toString())
-                        .put("endTime", it.endTime.toString())
-                        .put("km", it.distance.inKilometers)
-                        .put("source", it.metadata.dataOrigin.packageName)
-                )
-            }
+        try {
+            client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
+                .records
+                .forEach {
+                    distArr.put(
+                        JSONObject()
+                            .put("startTime", it.startTime.toString())
+                            .put("endTime", it.endTime.toString())
+                            .put("km", it.distance.inKilometers)
+                            .put("source", it.metadata.dataOrigin.packageName)
+                    )
+                }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "distances", e)
+        }
         out.put("distances", distArr)
 
         val speedArr = JSONArray()
-        client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
-            .records
-            .forEach { rec ->
-                val samples = JSONArray()
-                rec.samples.forEach { s ->
-                    samples.put(
+        try {
+            client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
+                .records
+                .forEach { rec ->
+                    val samples = JSONArray()
+                    rec.samples.forEach { s ->
+                        samples.put(
+                            JSONObject()
+                                .put("time", s.time.toString())
+                                .put("kmh", s.speed.inKilometersPerHour)
+                        )
+                    }
+                    speedArr.put(
                         JSONObject()
-                            .put("time", s.time.toString())
-                            .put("kmh", s.speed.inKilometersPerHour)
+                            .put("startTime", rec.startTime.toString())
+                            .put("endTime", rec.endTime.toString())
+                            .put("source", rec.metadata.dataOrigin.packageName)
+                            .put("samples", samples)
                     )
                 }
-                speedArr.put(
-                    JSONObject()
-                        .put("startTime", rec.startTime.toString())
-                        .put("endTime", rec.endTime.toString())
-                        .put("source", rec.metadata.dataOrigin.packageName)
-                        .put("samples", samples)
-                )
-            }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "speeds", e)
+        }
         out.put("speeds", speedArr)
 
+        if (readErrors.length() > 0) out.put("readErrors", readErrors)
         return out.toString()
     }
 
@@ -137,6 +158,9 @@ class HealthReader(private val client: HealthConnectClient) {
      *
      * HC への ReadRecordsRequest は 1 回だけ全レコード読み (時間範囲フィルタのみ)、
      * クライアント側で startTime の local date でバケットに振り分ける。
+     *
+     * `readTodayJson` と同じく per-type try-catch で partial 読取を許容
+     * (Refs #16)。落ちた section は top-level `readErrors` に格納。
      */
     suspend fun readPastDaysJson(days: Int): String {
         val zone = ZoneId.systemDefault()
@@ -149,6 +173,7 @@ class HealthReader(private val client: HealthConnectClient) {
         val sessionsByDay = HashMap<String, JSONArray>()
         val distancesByDay = HashMap<String, JSONArray>()
         val speedsByDay = HashMap<String, JSONArray>()
+        val readErrors = JSONObject()
 
         fun bucket(map: HashMap<String, JSONArray>, date: String): JSONArray =
             map.getOrPut(date) { JSONArray() }
@@ -156,50 +181,62 @@ class HealthReader(private val client: HealthConnectClient) {
         fun dateOf(inst: Instant): String =
             inst.atZone(zone).toLocalDate().toString()
 
-        client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
-            .records
-            .forEach {
-                bucket(sessionsByDay, dateOf(it.startTime)).put(
-                    JSONObject()
-                        .put("startTime", it.startTime.toString())
-                        .put("endTime", it.endTime.toString())
-                        .put("exerciseType", it.exerciseType)
-                        .put("title", it.title ?: JSONObject.NULL)
-                        .put("source", it.metadata.dataOrigin.packageName)
-                )
-            }
-
-        client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
-            .records
-            .forEach {
-                bucket(distancesByDay, dateOf(it.startTime)).put(
-                    JSONObject()
-                        .put("startTime", it.startTime.toString())
-                        .put("endTime", it.endTime.toString())
-                        .put("km", it.distance.inKilometers)
-                        .put("source", it.metadata.dataOrigin.packageName)
-                )
-            }
-
-        client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
-            .records
-            .forEach { rec ->
-                val samples = JSONArray()
-                rec.samples.forEach { s ->
-                    samples.put(
+        try {
+            client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
+                .records
+                .forEach {
+                    bucket(sessionsByDay, dateOf(it.startTime)).put(
                         JSONObject()
-                            .put("time", s.time.toString())
-                            .put("kmh", s.speed.inKilometersPerHour)
+                            .put("startTime", it.startTime.toString())
+                            .put("endTime", it.endTime.toString())
+                            .put("exerciseType", it.exerciseType)
+                            .put("title", it.title ?: JSONObject.NULL)
+                            .put("source", it.metadata.dataOrigin.packageName)
                     )
                 }
-                bucket(speedsByDay, dateOf(rec.startTime)).put(
-                    JSONObject()
-                        .put("startTime", rec.startTime.toString())
-                        .put("endTime", rec.endTime.toString())
-                        .put("source", rec.metadata.dataOrigin.packageName)
-                        .put("samples", samples)
-                )
-            }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "sessions", e)
+        }
+
+        try {
+            client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
+                .records
+                .forEach {
+                    bucket(distancesByDay, dateOf(it.startTime)).put(
+                        JSONObject()
+                            .put("startTime", it.startTime.toString())
+                            .put("endTime", it.endTime.toString())
+                            .put("km", it.distance.inKilometers)
+                            .put("source", it.metadata.dataOrigin.packageName)
+                    )
+                }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "distances", e)
+        }
+
+        try {
+            client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
+                .records
+                .forEach { rec ->
+                    val samples = JSONArray()
+                    rec.samples.forEach { s ->
+                        samples.put(
+                            JSONObject()
+                                .put("time", s.time.toString())
+                                .put("kmh", s.speed.inKilometersPerHour)
+                        )
+                    }
+                    bucket(speedsByDay, dateOf(rec.startTime)).put(
+                        JSONObject()
+                            .put("startTime", rec.startTime.toString())
+                            .put("endTime", rec.endTime.toString())
+                            .put("source", rec.metadata.dataOrigin.packageName)
+                            .put("samples", samples)
+                    )
+                }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "speeds", e)
+        }
 
         // バケット union を date 昇順で並べ、データ無し日も含めて連続的に出力
         // (= worker 側 R2 で「読み取り 0 件」の証跡を残す)。
@@ -215,6 +252,14 @@ class HealthReader(private val client: HealthConnectClient) {
                 .put("speeds", speedsByDay[key] ?: JSONArray())
             daysArr.put(JSONObject().put("date", key).put("payload", payload))
         }
-        return JSONObject().put("days", daysArr).toString()
+        val result = JSONObject().put("days", daysArr)
+        if (readErrors.length() > 0) result.put("readErrors", readErrors)
+        return result.toString()
+    }
+
+    private fun recordReadError(into: JSONObject, section: String, e: Throwable) {
+        val msg = "${e.javaClass.simpleName}: ${(e.message ?: "").take(240)}"
+        Log.w("HCReader", "readRecords[$section] failed: $msg", e)
+        into.put(section, msg)
     }
 }
