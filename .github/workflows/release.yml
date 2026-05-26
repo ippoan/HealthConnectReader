@@ -36,7 +36,9 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
-          VN=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          # `versionName` を含むコメント行を拾わないよう `versionName = "..."`
+          # の代入行に厳格マッチ (= 先頭の空白 + versionName + = + " + 値 + ")
+          VN=$(grep -E '^[[:space:]]*versionName[[:space:]]*=' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')
           if [ "$EVENT" = "pull_request" ]; then
             # PR ごとの dev-release。tag は `dev-pr<N>-<run>` で `-` を含むので
             # GitHub の releases/latest に出ない (= 安定 consumer 影響無し)。
