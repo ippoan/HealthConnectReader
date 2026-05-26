@@ -51,7 +51,13 @@ android {
         applicationId = "com.ippoan.hcreader"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
+        // versionCode は CI の GITHUB_RUN_NUMBER を渡して逐次インクリメント。
+        // local.properties / env に HCREADER_VERSION_CODE があればそれを優先、
+        // 無ければ 1 (= dev ビルド)。
+        // UpdateChecker (Refs ippoan/HealthConnectReader#18) が GitHub Release
+        // tag `v<versionName>+<run>` の +run 部分と現 versionCode を比較して
+        // 更新通知するため、毎 release で値が増える事が必須。
+        versionCode = cfg("HCREADER_VERSION_CODE", "1").toIntOrNull() ?: 1
         versionName = "0.1.0"
 
         // WebView が load する worker URL。custom domain `hcreader.ippoan.org`
