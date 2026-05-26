@@ -2,6 +2,7 @@ package com.ippoan.hcreader
 
 import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
@@ -16,6 +17,7 @@ import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.SpeedRecord
 import androidx.lifecycle.lifecycleScope
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.launch
 
 /**
@@ -51,6 +53,19 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        // SwipeRefreshLayout で WebView を包んで「スワイプ↓で再読み込み」を提供する。
+        // pull-to-refresh の発火は webView.reload() を叩くだけ。WebView が再 load
+        // 時に Bearer ヘッダが必要なので reload() ではなく loadUrl(..., headers)
+        // を再実行する。
+        // また WebView 自身がスクロール可能な領域だと swipe が誤発火するので、
+        // scrollY === 0 (= 最上部) の時だけ SwipeRefresh を enable する。
+        val swipe = SwipeRefreshLayout(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+
         val webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -58,13 +73,25 @@ class MainActivity : ComponentActivity() {
             )
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    swipe.isRefreshing = true
+                }
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    swipe.isRefreshing = false
+                }
+            }
             addJavascriptInterface(
                 HCBridge(applicationContext) {
                     runOnUiThread { requestPerms.launch(permissions) }
                 },
                 "HC",
             )
+            // スクロール位置を監視: 最上部以外では SwipeRefresh を無効化する
+            // (= ページ内スクロールが pull-to-refresh に誤検知されないようにする)
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                swipe.isEnabled = scrollY == 0
+            }
             // 初回 GET / に Bearer ヘッダを注入する。auth-worker JWT cookie 認証
             // (hcreader-worker PR #16) 導入後、ヘッダ無しの WebView 起動だと
             // /oauth/google/redirect に飛ばされ Google が embedded WebView を
@@ -78,7 +105,15 @@ class MainActivity : ComponentActivity() {
                 mapOf("Authorization" to "Bearer ${BuildConfig.UPLOAD_TOKEN}"),
             )
         }
-        setContentView(webView)
+        // pull-to-refresh: Bearer ヘッダ付きで GET / を再 load
+        swipe.setOnRefreshListener {
+            webView.loadUrl(
+                BuildConfig.WORKER_URL,
+                mapOf("Authorization" to "Bearer ${BuildConfig.UPLOAD_TOKEN}"),
+            )
+        }
+        swipe.addView(webView)
+        setContentView(swipe)
 
         // 起動時に 4 種類 (EXERCISE / DISTANCE / SPEED / HISTORY) のうち 1 つでも
         // 未 grant なら自動で HC permission dialog を出す。uninstall → install
