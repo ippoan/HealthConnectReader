@@ -89,9 +89,6 @@ jobs:
       - name: Decode keystore
         run: echo "${{ secrets.HCREADER_RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
 
-      - name: Set versionCode
-        run: sed -i "s/versionCode = [0-9]*/versionCode = ${{ github.run_number }}/" app/build.gradle.kts
-
       - name: Build release APK
         # PKCS12 keystore は store/key 同パスワードが仕様強制なので
         # `RELEASE_STORE_PASSWORD` 1 個を build.gradle.kts の両プロパティに
@@ -104,6 +101,10 @@ jobs:
           RELEASE_STORE_PASSWORD: ${{ secrets.HCREADER_RELEASE_STORE_PASSWORD }}
           HCREADER_RELEASE_UPLOAD_TOKEN: ${{ secrets.HCREADER_RELEASE_UPLOAD_TOKEN }}
           HCREADER_RELEASE_WORKER_URL: ${{ vars.HCREADER_RELEASE_WORKER_URL }}
+          # versionCode を CI の run_number で逐次インクリメント。これが無いと
+          # 毎 release で APK の versionCode=1 のままで、UpdateChecker が
+          # 「同じバージョン」と判定して通知が出ない (Refs #18)。
+          HCREADER_VERSION_CODE: ${{ github.run_number }}
 
       - name: Re-sign v1+v2
         run: |

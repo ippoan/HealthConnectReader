@@ -14,8 +14,10 @@ import java.net.URL
  * 失敗 (network / parse / rate limit) は silent skip (`null` 返す)。
  *
  * tag 形式は `v<versionName>+<runNumber>` (例: `v0.1.0+42`、release.yml で生成)。
- * 比較は **runNumber 部分** を抜いて BuildConfig.VERSION_CODE と比較する
- * (= CI の build.gradle.kts sed で versionCode に run_number が焼かれている前提)。
+ * 比較は **runNumber 部分** を抜いて BuildConfig.VERSION_CODE と比較する。
+ * release.yml が `HCREADER_VERSION_CODE=${{ github.run_number }}` を渡し、
+ * app/build.gradle.kts の `versionCode = cfg("HCREADER_VERSION_CODE", "1").toInt()`
+ * で APK に焼く前提 (dev ローカルビルドは 1 で固定 → 常に更新通知が出る)。
  *
  * Refs #18
  */
