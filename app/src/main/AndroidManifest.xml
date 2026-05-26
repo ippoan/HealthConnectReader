@@ -42,6 +42,16 @@
             <intent-filter>
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
             </intent-filter>
+
+            <!-- Android 14+ (API 34+) で HC 権限リクエストを通すには Activity に
+                 VIEW_PERMISSION_USAGE + HEALTH_PERMISSIONS の intent-filter を
+                 宣言する必要がある。無いと PermissionController が起動する
+                 権限 UI が silent fail でダイアログが出ない (Refs #25)。
+                 Android 13 までは不要だったが OS 同梱になった 14+ で必須化。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
         </activity>
     </application>
 
