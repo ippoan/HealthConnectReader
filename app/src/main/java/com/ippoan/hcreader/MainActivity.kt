@@ -1,5 +1,8 @@
 package com.ippoan.hcreader
 
+import android.app.AlertDialog
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -82,6 +85,10 @@ class MainActivity : ComponentActivity() {
         // 後は全 permission が reset されるため、user が WebView 上のボタンを押す
         // 前に prompt を出して操作を 1 ステップ減らす (Refs #6 UX 改善)。
         ensurePermissionsGranted()
+
+        // 起動時に GitHub Release を polling して新版あれば AlertDialog 表示。
+        // 失敗 (network / rate limit 60/hr / parse) は silent skip (Refs #18)。
+        checkForUpdate()
     }
 
     private fun ensurePermissionsGranted() {
@@ -92,6 +99,30 @@ class MainActivity : ComponentActivity() {
             if (!granted.containsAll(permissions)) {
                 requestPerms.launch(permissions)
             }
+        }
+    }
+
+    private fun checkForUpdate() {
+        lifecycleScope.launch {
+            val info = UpdateChecker.check() ?: return@launch
+            if (isFinishing || isDestroyed) return@launch
+            val target = info.apkUrl ?: info.htmlUrl
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("更新があります: ${info.tagName}")
+                .setMessage(
+                    "現在 v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})\n" +
+                        "最新 ${info.tagName} (build ${info.versionCode})\n\n" +
+                        "ダウンロードして手動でインストールしてください。"
+                )
+                .setPositiveButton("ダウンロード") { _, _ ->
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
+                    } catch (_: Exception) {
+                        // ハンドラ無しは黙殺 (= ブラウザ未インストール等)
+                    }
+                }
+                .setNegativeButton("後で", null)
+                .show()
         }
     }
 }
