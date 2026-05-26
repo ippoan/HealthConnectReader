@@ -62,7 +62,18 @@ class MainActivity : ComponentActivity() {
                 },
                 "HC",
             )
-            loadUrl(BuildConfig.WORKER_URL)
+            // 初回 GET / に Bearer ヘッダを注入する。auth-worker JWT cookie 認証
+            // (hcreader-worker PR #16) 導入後、ヘッダ無しの WebView 起動だと
+            // /oauth/google/redirect に飛ばされ Google が embedded WebView を
+            // `disallowed_useragent` で恒久 block する事象を回避するため。
+            // 注入は initial load のみで効くが、worker の `GET /` は 200 直接
+            // 返し (= 後続 navigation なし) なので十分。XHR 経由の API call は
+            // 引き続き `HC.getUploadToken()` 経由で Bearer を送る。
+            // Refs ippoan/HealthConnectReader#14
+            loadUrl(
+                BuildConfig.WORKER_URL,
+                mapOf("Authorization" to "Bearer ${BuildConfig.UPLOAD_TOKEN}"),
+            )
         }
         setContentView(webView)
 
