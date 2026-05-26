@@ -89,9 +89,6 @@ jobs:
       - name: Decode keystore
         run: echo "${{ secrets.HCREADER_RELEASE_KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
 
-      - name: Set versionCode
-        run: sed -i "s/versionCode = [0-9]*/versionCode = ${{ github.run_number }}/" app/build.gradle.kts
-
       - name: Build release APK
         # PKCS12 keystore は store/key 同パスワードが仕様強制なので
         # `RELEASE_STORE_PASSWORD` 1 個を build.gradle.kts の両プロパティに
