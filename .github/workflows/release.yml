@@ -271,10 +271,14 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     uses: ippoan/ci-workflows/.github/workflows/auto-merge.yml@main
     secrets:
-      # TAG_RELEASE_PAT が無ければ github.token に fallback (auto-merge.yml の
-      # 内部仕様)。fallback だと PR merge 後の `push: main` event が
-      # github-actions[bot] 起因になり release.yml の main run が発火しない
-      # 仕様 (downstream workflows are not triggered by GITHUB_TOKEN events)。
-      # main 側の app-release.apk を確実に更新したい場合は org-level に
-      # TAG_RELEASE_PAT を設定するか、merge 後に手動 workflow_dispatch する。
+      # App token (CI_APP_ID/KEY, org secret) を優先で渡す。auto-merge.yml は
+      # これがあると独自 rate-limit バケットを持つ App installation token を
+      # mint するため、個人の GraphQL クォータ枯渇による
+      # "API rate limit already exceeded for user ID" の cosmetic fail を回避できる
+      # (ci-workflows#65)。App token は merge commit の push actor も非
+      # GITHUB_TOKEN にするので、PR merge 後の `push: main` event が
+      # release.yml の main run (stable app-release.apk 更新) を発火させられる。
+      # CI_APP_ID 未設定なら TAG_RELEASE_PAT → github.token に fallback (後方互換)。
+      CI_APP_ID: ${{ secrets.CI_APP_ID }}
+      CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}
       TAG_RELEASE_PAT: ${{ secrets.TAG_RELEASE_PAT }}

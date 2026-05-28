@@ -5,6 +5,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.SpeedRecord
+import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import org.json.JSONArray
@@ -84,9 +85,46 @@ class HealthReader(private val client: HealthConnectClient) {
         out.put("collectedAt", Instant.now().toString())
         val readErrors = JSONObject()
 
+        // 速度 (SpeedRecord) を記録している source = トレッドミル (Life Fitness) を
+        // 特定する。端末本体の歩数/距離アプリは速度を記録しないため、この source 集合で
+        // ExerciseSession / Distance を絞ると Life Fitness 以外の細切れ距離レコードの
+        // 混入を防げる (= 距離過大 → distance/duration 速度が実機ベルト速度とズレる問題の
+        // 根治)。SpeedRecord が 0 件なら空集合 = 全件読取に fallback。Refs #28
+        val speedArr = JSONArray()
+        var originFilter: Set<DataOrigin> = emptySet()
+        try {
+            val speedRecords = client.readRecords(
+                ReadRecordsRequest(SpeedRecord::class, range)
+            ).records
+            originFilter = speedRecords.map { it.metadata.dataOrigin }.toSet()
+            speedRecords.forEach { rec ->
+                val samples = JSONArray()
+                rec.samples.forEach { s ->
+                    samples.put(
+                        JSONObject()
+                            .put("time", s.time.toString())
+                            .put("kmh", s.speed.inKilometersPerHour)
+                    )
+                }
+                speedArr.put(
+                    JSONObject()
+                        .put("startTime", rec.startTime.toString())
+                        .put("endTime", rec.endTime.toString())
+                        .put("source", rec.metadata.dataOrigin.packageName)
+                        .put("samples", samples)
+                )
+            }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "speeds", e)
+        }
+
         val sessionsArr = JSONArray()
         try {
-            client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
+            client.readRecords(
+                ReadRecordsRequest(
+                    ExerciseSessionRecord::class, range, dataOriginFilter = originFilter
+                )
+            )
                 .records
                 .forEach {
                     sessionsArr.put(
@@ -105,7 +143,11 @@ class HealthReader(private val client: HealthConnectClient) {
 
         val distArr = JSONArray()
         try {
-            client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
+            client.readRecords(
+                ReadRecordsRequest(
+                    DistanceRecord::class, range, dataOriginFilter = originFilter
+                )
+            )
                 .records
                 .forEach {
                     distArr.put(
@@ -120,31 +162,6 @@ class HealthReader(private val client: HealthConnectClient) {
             recordReadError(readErrors, "distances", e)
         }
         out.put("distances", distArr)
-
-        val speedArr = JSONArray()
-        try {
-            client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
-                .records
-                .forEach { rec ->
-                    val samples = JSONArray()
-                    rec.samples.forEach { s ->
-                        samples.put(
-                            JSONObject()
-                                .put("time", s.time.toString())
-                                .put("kmh", s.speed.inKilometersPerHour)
-                        )
-                    }
-                    speedArr.put(
-                        JSONObject()
-                            .put("startTime", rec.startTime.toString())
-                            .put("endTime", rec.endTime.toString())
-                            .put("source", rec.metadata.dataOrigin.packageName)
-                            .put("samples", samples)
-                    )
-                }
-        } catch (e: Exception) {
-            recordReadError(readErrors, "speeds", e)
-        }
         out.put("speeds", speedArr)
 
         if (readErrors.length() > 0) out.put("readErrors", readErrors)
@@ -181,42 +198,15 @@ class HealthReader(private val client: HealthConnectClient) {
         fun dateOf(inst: Instant): String =
             inst.atZone(zone).toLocalDate().toString()
 
-        try {
-            client.readRecords(ReadRecordsRequest(ExerciseSessionRecord::class, range))
-                .records
-                .forEach {
-                    bucket(sessionsByDay, dateOf(it.startTime)).put(
-                        JSONObject()
-                            .put("startTime", it.startTime.toString())
-                            .put("endTime", it.endTime.toString())
-                            .put("exerciseType", it.exerciseType)
-                            .put("title", it.title ?: JSONObject.NULL)
-                            .put("source", it.metadata.dataOrigin.packageName)
-                    )
-                }
-        } catch (e: Exception) {
-            recordReadError(readErrors, "sessions", e)
-        }
-
-        try {
-            client.readRecords(ReadRecordsRequest(DistanceRecord::class, range))
-                .records
-                .forEach {
-                    bucket(distancesByDay, dateOf(it.startTime)).put(
-                        JSONObject()
-                            .put("startTime", it.startTime.toString())
-                            .put("endTime", it.endTime.toString())
-                            .put("km", it.distance.inKilometers)
-                            .put("source", it.metadata.dataOrigin.packageName)
-                    )
-                }
-        } catch (e: Exception) {
-            recordReadError(readErrors, "distances", e)
-        }
-
+        // 速度 (SpeedRecord) を記録している source = トレッドミル (Life Fitness) を
+        // 特定し、その source だけで ExerciseSession / Distance を絞る。端末本体の
+        // 歩数/距離アプリは速度を記録しないため、Life Fitness 以外の細切れ距離レコードの
+        // 混入を防げる。SpeedRecord 0 件なら空集合 = 全件読取に fallback。Refs #28
+        var originFilter: Set<DataOrigin> = emptySet()
         try {
             client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
                 .records
+                .also { recs -> originFilter = recs.map { it.metadata.dataOrigin }.toSet() }
                 .forEach { rec ->
                     val samples = JSONArray()
                     rec.samples.forEach { s ->
@@ -236,6 +226,47 @@ class HealthReader(private val client: HealthConnectClient) {
                 }
         } catch (e: Exception) {
             recordReadError(readErrors, "speeds", e)
+        }
+
+        try {
+            client.readRecords(
+                ReadRecordsRequest(
+                    ExerciseSessionRecord::class, range, dataOriginFilter = originFilter
+                )
+            )
+                .records
+                .forEach {
+                    bucket(sessionsByDay, dateOf(it.startTime)).put(
+                        JSONObject()
+                            .put("startTime", it.startTime.toString())
+                            .put("endTime", it.endTime.toString())
+                            .put("exerciseType", it.exerciseType)
+                            .put("title", it.title ?: JSONObject.NULL)
+                            .put("source", it.metadata.dataOrigin.packageName)
+                    )
+                }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "sessions", e)
+        }
+
+        try {
+            client.readRecords(
+                ReadRecordsRequest(
+                    DistanceRecord::class, range, dataOriginFilter = originFilter
+                )
+            )
+                .records
+                .forEach {
+                    bucket(distancesByDay, dateOf(it.startTime)).put(
+                        JSONObject()
+                            .put("startTime", it.startTime.toString())
+                            .put("endTime", it.endTime.toString())
+                            .put("km", it.distance.inKilometers)
+                            .put("source", it.metadata.dataOrigin.packageName)
+                    )
+                }
+        } catch (e: Exception) {
+            recordReadError(readErrors, "distances", e)
         }
 
         // バケット union を date 昇順で並べ、データ無し日も含めて連続的に出力

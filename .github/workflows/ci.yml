@@ -1,0 +1,18 @@
+name: CI
+# PR gate: ci-workflows の reusable Android CI を呼ぶ。caller job id を `ci` に
+# することで status check は `ci / Build APK` / `ci / Lint` になり、main の
+# branch-protection required check と一致する。
+#
+# release.yml (job: build) は release 署名 APK + dev APK 配信が責務で、こちらは
+# debug build + lint の PR gate。Refs #28
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ippoan/ci-workflows/.github/workflows/android-ci.yml@main
