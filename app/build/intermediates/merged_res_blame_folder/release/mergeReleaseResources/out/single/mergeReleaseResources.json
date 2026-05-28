@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "com.ippoan.hcreader.app-release-37:/xml_file_paths.xml.flat",
+        "source": "com.ippoan.hcreader.app-main-38:/xml/file_paths.xml"
+    }
+]
