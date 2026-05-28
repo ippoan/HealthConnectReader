@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider が公開するパス。自動更新の APK は
+     getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) = .../files/Download に
+     置くので、その 1 箇所だけを content:// で読めるようにする。Refs #30 -->
+<paths>
+    <external-files-path name="apk_download" path="Download/" />
+</paths>

@@ -1,15 +1,25 @@
 package com.ippoan.hcreader
 
 import android.app.AlertDialog
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
@@ -19,6 +29,7 @@ import androidx.health.connect.client.records.SpeedRecord
 import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * WebView ホスト Activity。worker `BuildConfig.WORKER_URL` を load し、
@@ -141,23 +152,133 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val info = UpdateChecker.check() ?: return@launch
             if (isFinishing || isDestroyed) return@launch
-            val target = info.apkUrl ?: info.htmlUrl
+            val apkUrl = info.apkUrl
+            val hasApk = apkUrl != null
             AlertDialog.Builder(this@MainActivity)
                 .setTitle("更新があります: ${info.tagName}")
                 .setMessage(
                     "現在 v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})\n" +
                         "最新 ${info.tagName} (build ${info.versionCode})\n\n" +
-                        "ダウンロードして手動でインストールしてください。"
+                        if (hasApk) "ダウンロードしてインストールします。"
+                        else "リリースページを開きます。"
                 )
-                .setPositiveButton("ダウンロード") { _, _ ->
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
-                    } catch (_: Exception) {
-                        // ハンドラ無しは黙殺 (= ブラウザ未インストール等)
+                .setPositiveButton(if (hasApk) "更新" else "リリースページ") { _, _ ->
+                    if (apkUrl != null) {
+                        startUpdateDownload(apkUrl, info.tagName)
+                    } else {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.htmlUrl)))
+                        } catch (_: Exception) {
+                            // ハンドラ無しは黙殺 (= ブラウザ未インストール等)
+                        }
                     }
                 }
                 .setNegativeButton("後で", null)
                 .show()
         }
+    }
+
+    /**
+     * APK を DownloadManager で DL し、完了後にパッケージインストーラを起動する。
+     *
+     * 旧実装は `ACTION_VIEW` で URL をブラウザに渡すだけで、DL 後にインストールへ
+     * 移行しなかった (Refs #30)。アプリ内 DL → FileProvider content:// URI →
+     * `ACTION_VIEW` (package-archive) でインストーラを自動起動する。
+     *
+     * Android 8+ は「このアプリからのインストール」許可が必要。未許可なら設定へ
+     * 誘導して return する (ユーザーが許可後にもう一度「更新」を押す想定)。
+     */
+    private fun startUpdateDownload(apkUrl: String, tag: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            Toast.makeText(
+                this,
+                "「このアプリからのインストール」を許可してから、もう一度「更新」を押してください",
+                Toast.LENGTH_LONG,
+            ).show()
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName"),
+                    )
+                )
+            } catch (_: Exception) {
+                // 該当設定画面が無い端末は黙殺
+            }
+            return
+        }
+
+        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        // 同名で上書き DL するため、古い APK が残っていると FileProvider が古い file を
+        // 掴む。事前に消す。
+        val dest = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), DOWNLOAD_APK_NAME)
+        dest.delete()
+
+        val request = DownloadManager.Request(Uri.parse(apkUrl)).apply {
+            setTitle("HealthConnectReader $tag")
+            setMimeType(MIME_APK)
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationInExternalFilesDir(
+                this@MainActivity, Environment.DIRECTORY_DOWNLOADS, DOWNLOAD_APK_NAME,
+            )
+        }
+        val downloadId = dm.enqueue(request)
+        Toast.makeText(this, "ダウンロード中…", Toast.LENGTH_SHORT).show()
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id != downloadId) return
+                try {
+                    ctx.unregisterReceiver(this)
+                } catch (_: Exception) {
+                    // 既に解除済みは無視
+                }
+                val ok = dm.query(DownloadManager.Query().setFilterById(downloadId)).use { c ->
+                    c.moveToFirst() &&
+                        c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) ==
+                        DownloadManager.STATUS_SUCCESSFUL
+                }
+                if (!ok) {
+                    Toast.makeText(ctx, "ダウンロードに失敗しました", Toast.LENGTH_LONG).show()
+                    return
+                }
+                installApk(dest)
+            }
+        }
+        // ACTION_DOWNLOAD_COMPLETE は system (別プロセス) からの broadcast なので、
+        // Android 14+ (API 34+) では RECEIVER_EXPORTED 指定が必須。ContextCompat が
+        // API レベルを吸収する。
+        ContextCompat.registerReceiver(
+            this,
+            receiver,
+            IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+    }
+
+    /** DL 済み APK を FileProvider 経由でインストーラに渡す。 */
+    private fun installApk(apk: File) {
+        if (!apk.exists()) {
+            Toast.makeText(this, "APK が見つかりません", Toast.LENGTH_LONG).show()
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, MIME_APK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            Toast.makeText(this, "インストーラを起動できませんでした", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private companion object {
+        const val DOWNLOAD_APK_NAME = "hcreader-update.apk"
+        const val MIME_APK = "application/vnd.android.package-archive"
     }
 }

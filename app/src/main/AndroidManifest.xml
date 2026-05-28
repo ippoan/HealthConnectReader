@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- アプリ内自動更新: DL した APK をインストーラに渡すため。Android 8+ は
+         さらに端末側で「このアプリからのインストール」許可が要る (未許可時は
+         MainActivity が ACTION_MANAGE_UNKNOWN_APP_SOURCES へ誘導する)。Refs #30 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Android 13 以下で Health Connect アプリ (com.google.android.apps.healthdata) を
          クエリできるようにする (Android 14+ では Health Connect が OS 同梱なので不要だが
          後方互換のため記載) -->
@@ -53,6 +58,19 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity>
+
+        <!-- 自動更新で DL した APK を content:// URI でインストーラに渡すための
+             FileProvider。external-files-path (= getExternalFilesDir) 配下のみ公開。
+             Refs #30 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
