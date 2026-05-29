@@ -132,7 +132,9 @@ class MainActivity : ComponentActivity() {
         // 入れ替わったかを端末で即確認するため (UpdateChecker のダイアログは API
         // レート制限で無言失敗し当てにならないため、視認できる版表示を足す)。Refs #34
         val versionLabel = TextView(this).apply {
-            text = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+            // リリースタグ "v0.1.0+47" と同じ表記にして照合しやすくする。
+            // 後ろの +N (= versionCode = CI run_number) が版ごとに増える本体。
+            text = "v${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.argb(140, 0, 0, 0))
             setPadding(20, 8, 20, 8)
