@@ -7,14 +7,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -124,7 +127,32 @@ class MainActivity : ComponentActivity() {
             )
         }
         swipe.addView(webView)
-        setContentView(swipe)
+
+        // 画面右下にバージョンを常時表示 (v<name> (<code>))。アプリ更新が実際に
+        // 入れ替わったかを端末で即確認するため (UpdateChecker のダイアログは API
+        // レート制限で無言失敗し当てにならないため、視認できる版表示を足す)。Refs #34
+        val versionLabel = TextView(this).apply {
+            // リリースタグ "v0.1.0+47" と同じ表記にして照合しやすくする。
+            // 後ろの +N (= versionCode = CI run_number) が版ごとに増える本体。
+            text = "v${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.argb(140, 0, 0, 0))
+            setPadding(20, 8, 20, 8)
+            textSize = 11f
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { gravity = Gravity.BOTTOM or Gravity.END }
+        }
+        val root = FrameLayout(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            addView(swipe)
+            addView(versionLabel)
+        }
+        setContentView(root)
 
         // 起動時に 4 種類 (EXERCISE / DISTANCE / SPEED / HISTORY) のうち 1 つでも
         // 未 grant なら自動で HC permission dialog を出す。uninstall → install
