@@ -24,7 +24,8 @@ class HealthReader(private val client: HealthConnectClient) {
     }
 
     // 診断モード: フィルタなしで全件読み、値と出所 (packageName) を吐く。
-    // Life Fitness の packageName が判明したら dataOriginFilter を足してフィルタする。
+    // upload 経路 (readTodayJson / readPastDaysJson) は TREADMILL_ORIGINS で絞るが、
+    // こちらは新しい source の混入調査用にあえて全件のまま残す。
     suspend fun readToday(): String {
         val sb = StringBuilder()
         val range = todayRange()
@@ -85,18 +86,18 @@ class HealthReader(private val client: HealthConnectClient) {
         out.put("collectedAt", Instant.now().toString())
         val readErrors = JSONObject()
 
-        // 速度 (SpeedRecord) を記録している source = トレッドミル (Life Fitness) を
-        // 特定する。端末本体の歩数/距離アプリは速度を記録しないため、この source 集合で
-        // ExerciseSession / Distance を絞ると Life Fitness 以外の細切れ距離レコードの
-        // 混入を防げる (= 距離過大 → distance/duration 速度が実機ベルト速度とズレる問題の
-        // 根治)。SpeedRecord が 0 件なら空集合 = 全件読取に fallback。Refs #28
+        // トレッドミル (Life Fitness) の dataOrigin だけに絞って読む。同じ運動時間帯に
+        // Fitbit が手首歩数ベースの過大な距離を、Google Fit が別セッション+速度を書くため、
+        // source を固定しないと worker 側の距離集計 (source 間 max) が Fitbit の過大値を
+        // 拾い (実データで 3.004km→3.739km に化けることを確認)、Google Fit の重複
+        // 「ランニング」セッションも残る。#29 の「速度を書く source で絞る」案は Google Fit
+        // も速度を書くため不十分だった。Refs #28 #32
         val speedArr = JSONArray()
-        var originFilter: Set<DataOrigin> = emptySet()
+        val originFilter = TREADMILL_ORIGINS
         try {
             val speedRecords = client.readRecords(
-                ReadRecordsRequest(SpeedRecord::class, range)
+                ReadRecordsRequest(SpeedRecord::class, range, dataOriginFilter = originFilter)
             ).records
-            originFilter = speedRecords.map { it.metadata.dataOrigin }.toSet()
             speedRecords.forEach { rec ->
                 val samples = JSONArray()
                 rec.samples.forEach { s ->
@@ -198,15 +199,14 @@ class HealthReader(private val client: HealthConnectClient) {
         fun dateOf(inst: Instant): String =
             inst.atZone(zone).toLocalDate().toString()
 
-        // 速度 (SpeedRecord) を記録している source = トレッドミル (Life Fitness) を
-        // 特定し、その source だけで ExerciseSession / Distance を絞る。端末本体の
-        // 歩数/距離アプリは速度を記録しないため、Life Fitness 以外の細切れ距離レコードの
-        // 混入を防げる。SpeedRecord 0 件なら空集合 = 全件読取に fallback。Refs #28
-        var originFilter: Set<DataOrigin> = emptySet()
+        // トレッドミル (Life Fitness) の dataOrigin だけに絞る。Fitbit の過大距離 /
+        // Google Fit の重複セッション混入を防ぐ (readTodayJson と同じ理由)。Refs #28 #32
+        val originFilter = TREADMILL_ORIGINS
         try {
-            client.readRecords(ReadRecordsRequest(SpeedRecord::class, range))
+            client.readRecords(
+                ReadRecordsRequest(SpeedRecord::class, range, dataOriginFilter = originFilter)
+            )
                 .records
-                .also { recs -> originFilter = recs.map { it.metadata.dataOrigin }.toSet() }
                 .forEach { rec ->
                     val samples = JSONArray()
                     rec.samples.forEach { s ->
@@ -292,5 +292,19 @@ class HealthReader(private val client: HealthConnectClient) {
         val msg = "${e.javaClass.simpleName}: ${(e.message ?: "").take(240)}"
         Log.w("HCReader", "readRecords[$section] failed: $msg", e)
         into.put(section, msg)
+    }
+
+    companion object {
+        /**
+         * アップロード対象とする dataOrigin = 実機トレッドミル (Life Fitness) のみ。
+         *
+         * 同じ運動時間帯に Fitbit (`com.fitbit.FitbitMobile`) が手首歩数ベースの過大な
+         * DistanceRecord を、Google Fit (`com.google.android.apps.fitness`) が別の
+         * ExerciseSession + SpeedRecord を書き込む。これらを除外しないと:
+         *   - worker 側の距離集計 (source 間 max) が Fitbit の過大値を採用 (3.004km→3.739km)
+         *   - Google Fit の重複「ランニング」セッションがダッシュボードに残る
+         * packageName は実機アップロードの生データで確認済み。Refs #28 #32
+         */
+        private val TREADMILL_ORIGINS = setOf(DataOrigin("com.lifefitness.connect"))
     }
 }
