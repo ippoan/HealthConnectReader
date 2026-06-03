@@ -211,6 +211,10 @@ jobs:
         env:
           REL_DIR: ${{ steps.dist.outputs.rel_dir }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          APK_URL: ${{ steps.dist.outputs.apk_url }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           # build artifact を一旦避難
@@ -249,6 +253,17 @@ jobs:
           cp /tmp/dist/app-release.apk        "${TARGET_DIR}/app-release.apk"
           cp /tmp/dist/app-release.apk.sha256 "${TARGET_DIR}/app-release.apk.sha256"
           cp /tmp/dist/app-release-qr.png     "${TARGET_DIR}/app-release-qr.png"
+
+          # Stable (main) のみ root に latest.json を吐く。UpdateChecker は
+          # api.github.com ではなくこの静的ファイルを見て新版を判定するので
+          # REST API のレート制限 (60/hr) を食わない (Refs #21)。dev PR build
+          # (REL_DIR 非空) では更新しない = UpdateChecker を dev 版へ誘導しない。
+          if [ -z "${REL_DIR}" ]; then
+            printf '{"tag":"%s","versionName":"%s","versionCode":%s,"apkUrl":"%s","htmlUrl":"https://github.com/%s/releases/tag/%s"}\n' \
+              "${TAG}" "${VERSION_NAME}" "${RUN_NUMBER}" "${APK_URL}" "${REPO}" "${TAG}" > latest.json
+            git add latest.json
+          fi
+
           git add "${TARGET_DIR}"
           git commit -m "Update APK ${TAG} (${TARGET_DIR})"
 
