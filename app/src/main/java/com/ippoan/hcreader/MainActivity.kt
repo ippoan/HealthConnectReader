@@ -160,8 +160,9 @@ class MainActivity : ComponentActivity() {
         // 前に prompt を出して操作を 1 ステップ減らす (Refs #6 UX 改善)。
         ensurePermissionsGranted()
 
-        // 起動時に GitHub Release を polling して新版あれば AlertDialog 表示。
-        // 失敗 (network / rate limit 60/hr / parse) は silent skip (Refs #18)。
+        // 起動時に gh-pages の latest.json を見て新版あれば AlertDialog 表示。
+        // 同じ tag を前回見せていれば再 nag しない (last_seen_tag、Refs #21)。
+        // 失敗 (network / parse) は silent skip。
         checkForUpdate()
     }
 
@@ -180,6 +181,13 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val info = UpdateChecker.check() ?: return@launch
             if (isFinishing || isDestroyed) return@launch
+            // 再 nag 抑制: 同じ tag を前回見せていたらダイアログを出さない。
+            // 時間 cache は不要 — tag が変わった時だけ通知する (Refs #21)。
+            val prefs = getSharedPreferences(PREFS_UPDATE, MODE_PRIVATE)
+            if (prefs.getString(KEY_LAST_SEEN_TAG, null) == info.tagName) {
+                return@launch
+            }
+            prefs.edit().putString(KEY_LAST_SEEN_TAG, info.tagName).apply()
             val apkUrl = info.apkUrl
             val hasApk = apkUrl != null
             AlertDialog.Builder(this@MainActivity)
@@ -308,5 +316,9 @@ class MainActivity : ComponentActivity() {
     private companion object {
         const val DOWNLOAD_APK_NAME = "hcreader-update.apk"
         const val MIME_APK = "application/vnd.android.package-archive"
+        // 更新通知の再 nag 抑制 (Refs #21): 一度見せた tag を覚えておき、
+        // 同じ tag では次回以降ダイアログを出さない。新しい tag で再び出す。
+        const val PREFS_UPDATE = "hcreader_update"
+        const val KEY_LAST_SEEN_TAG = "last_seen_tag"
     }
 }
