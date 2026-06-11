@@ -1,0 +1,27 @@
+# ci-dashboard (/release-wave の Tag Release ボタン) が
+# `POST /actions/workflows/tag-release.yml/dispatches` で叩くエントリポイント。
+#
+# 本 repo の release は「main push で release.yml が APK build +
+# v<versionName>+<run_number> tag を自動発行」するモデルなので、
+# ci-workflows の semver 採番 reusable (tag-release.yml@main) は使わない
+# (tag push では何も発火しない / versionCode 体系も別)。代わりに release.yml
+# を main で dispatch するだけの薄い wrapper にする。release.yml 側の
+# run_number カウンタを使うため versionCode の単調増加も維持される (Refs #38)。
+name: tag-release
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch release.yml on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        # GITHUB_TOKEN 発の event は通常ほかの workflow を発火させないが、
+        # workflow_dispatch / repository_dispatch は例外で発火する (GitHub docs)。
+        run: gh workflow run release.yml --repo "$REPO" --ref main
