@@ -10,6 +10,10 @@ on:
     paths:
       - 'app/**'
       - '.github/workflows/release.yml'
+  # 手動 / tag-release.yml (= ci-dashboard の Tag Release ボタン) からの発火。
+  # pull_request 以外の event は stable path (v<versionName>+<run> tag + Pages root)
+  # に落ちるので、main push と同じ stable release として動く (Refs #38)。
+  workflow_dispatch:
 permissions:
   contents: write
   pull-requests: write
